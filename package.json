@@ -1,0 +1,43 @@
+{
+  "name": "hexo-image-avif",
+  "version": "0.1.0",
+  "description": "Localize remote Hexo post images and convert them to AVIF.",
+  "main": "index.js",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=24"
+  },
+  "peerDependencies": {
+    "hexo": ">=8.1.2 <9"
+  },
+  "dependencies": {
+    "sharp": "^0.35.4"
+  },
+  "devDependencies": {
+    "hexo": "8.1.2"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "keywords": [
+    "hexo",
+    "avif",
+    "image",
+    "plugin"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wuhunyu/hexo-image-avif.git"
+  },
+  "bugs": {
+    "url": "https://github.com/wuhunyu/hexo-image-avif/issues"
+  },
+  "homepage": "https://github.com/wuhunyu/hexo-image-avif#readme",
+  "files": [
+    "index.js",
+    "lib/",
+    "README.md",
+    "LICENSE"
+  ]
+}

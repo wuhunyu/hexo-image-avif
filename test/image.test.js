@@ -102,3 +102,36 @@ test('removes the temporary file when conversion fails', async () => {
   await assert.rejects(fs.stat(targetPath), { code: 'ENOENT' });
   await assert.rejects(fs.stat(tempPath), { code: 'ENOENT' });
 });
+
+test('passes SVG rasterization density to Sharp before AVIF encoding', async () => {
+  const dir = await tempDir();
+  const targetPath = path.join(dir, 'vector.avif');
+  const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>');
+  let constructorOptions;
+  let avifOptions;
+
+  function sharpImpl(buffer, options) {
+    assert.deepEqual(buffer, svg);
+    constructorOptions = options;
+    return {
+      avif(optionsValue) {
+        avifOptions = optionsValue;
+        return this;
+      },
+      async toFile(filePath) {
+        await fs.writeFile(filePath, 'svg-as-avif');
+      },
+    };
+  }
+
+  await convertRemoteImage({
+    url: 'https://example.com/logo.svg',
+    targetPath,
+    fetchImpl: async () => response([...svg]),
+    sharpImpl,
+  });
+
+  assert.deepEqual(constructorOptions, { density: 144 });
+  assert.deepEqual(avifOptions, { quality: 75, effort: 4 });
+  assert.equal(await fs.readFile(targetPath, 'utf8'), 'svg-as-avif');
+});

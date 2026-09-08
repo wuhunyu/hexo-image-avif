@@ -123,3 +123,64 @@ test('processes jobs serially and leaves only failed image references unchanged'
   assert.equal(summary.updatedFiles, 1);
   assert.equal(messages.warn.some(message => message.includes('decode failed')), true);
 });
+
+test('handle_subffix filters by URL pathname extension before collision detection', async () => {
+  const { sourceDir, hexo } = await makeSite();
+  hexo.config.image_avif = { handle_subffix: ['.JPG'] };
+  const markdownPath = path.join(sourceDir, '_posts', 'post.md');
+  const original = [
+    '![jpg](https://img.example.com/images/a.jpg?width=1200)',
+    '![png](https://other.example.com/images/a.png)',
+    '![svg](https://img.example.com/vector/logo.svg)',
+    '',
+  ].join('\n');
+  await fs.writeFile(markdownPath, original);
+
+  const convertedUrls = [];
+  async function converter({ url, targetPath }) {
+    convertedUrls.push(url);
+    await fs.mkdir(path.dirname(targetPath), { recursive: true });
+    await fs.writeFile(targetPath, 'avif');
+  }
+
+  const summary = await processImages(hexo, { convertRemoteImage: converter });
+
+  assert.deepEqual(convertedUrls, ['https://img.example.com/images/a.jpg?width=1200']);
+  assert.equal(await fs.readFile(markdownPath, 'utf8'), [
+    '![jpg](/images/images-a.avif)',
+    '![png](https://other.example.com/images/a.png)',
+    '![svg](https://img.example.com/vector/logo.svg)',
+    '',
+  ].join('\n'));
+  assert.equal(summary.found, 1);
+  assert.equal(summary.converted, 1);
+});
+
+test('empty or wildcard handle_subffix processes every remote image', async () => {
+  for (const handleSubffix of [[], ['*']]) {
+    const { sourceDir, hexo } = await makeSite();
+    hexo.config.image_avif = { handle_subffix: handleSubffix };
+    const markdownPath = path.join(sourceDir, '_posts', 'post.md');
+    await fs.writeFile(markdownPath, [
+      '![jpg](https://img.example.com/a.jpg)',
+      '![svg](https://img.example.com/b.svg)',
+      '![noext](https://img.example.com/image)',
+      '',
+    ].join('\n'));
+
+    const convertedUrls = [];
+    async function converter({ url, targetPath }) {
+      convertedUrls.push(url);
+      await fs.mkdir(path.dirname(targetPath), { recursive: true });
+      await fs.writeFile(targetPath, 'avif');
+    }
+
+    const summary = await processImages(hexo, { convertRemoteImage: converter });
+    assert.deepEqual(convertedUrls, [
+      'https://img.example.com/a.jpg',
+      'https://img.example.com/b.svg',
+      'https://img.example.com/image',
+    ]);
+    assert.equal(summary.found, 3);
+  }
+});

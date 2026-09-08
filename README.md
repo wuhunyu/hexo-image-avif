@@ -48,6 +48,21 @@ It processes remote image URLs in:
 
 Only `http://` and `https://` URLs are processed. Empty and already-local references are ignored.
 
+By default, every remote image URL is attempted. You can limit processing by URL pathname suffix with `image_avif.handle_subffix`.
+
+```yaml
+image_avif:
+  handle_subffix:
+    - .png
+    - .jpg
+    - .jpeg
+    - .svg
+```
+
+Suffix matching is case-insensitive and ignores URL query strings and fragments. An omitted or empty `handle_subffix`, or a list containing `*`, processes all remote image URLs, including URLs without a file extension.
+
+SVG input is supported through Sharp and is rasterized at 144 DPI before AVIF encoding.
+
 ## Output path
 
 Images are written below `source/images`, keeping the Markdown file's directory relative to `_posts` or `_drafts`.
@@ -89,7 +104,9 @@ Image processing is serial.
 
 A normal image failure such as HTTP 403/404, timeout, download failure, or decoding failure is logged. That image keeps its original remote URL and processing continues with subsequent images.
 
-If two different remote URLs resolve to the same destination path, processing stops before any download or Markdown mutation. The error prints:
+If two different remote URLs resolve to the same destination path, processing stops before any download or Markdown mutation. Suffix filtering is applied before collision detection, so excluded images do not participate in collision checks.
+
+The error prints:
 
 - destination path
 - first Markdown file and remote URL
@@ -107,7 +124,16 @@ image_avif:
   quality: 75
   effort: 4
   timeout: 30000
+  handle_subffix:
+    - '*'
 ```
+
+`handle_subffix` behavior:
+
+- omitted: process all remote image URLs
+- `[]`: process all remote image URLs
+- contains `*`: process all remote image URLs
+- `['.png', '.jpg']`: only process URLs whose pathname ends in `.png` or `.jpg`
 
 ## Development
 

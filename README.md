@@ -98,13 +98,35 @@ The local filename is derived from the URL pathname:
 3. replace the original extension with `.avif`
 4. ignore URL query strings and fragments
 
+## Concurrent processing
+
+The plugin first scans all Markdown files and collects every image reference. References that resolve to the same full `targetPath` are grouped into one conversion task, so concurrent workers never write the same destination file at the same time.
+
+Only image conversion runs concurrently. Markdown discovery happens before conversion, and Markdown replacement happens only after all conversion tasks finish.
+
+Concurrency is enabled by default. When `concurrency` is omitted or set to `0`, the worker count uses Node.js `os.availableParallelism()`, which reflects the CPU parallelism available to the host/container. Set `concurrent: false` to force serial image processing.
+
+If a destination AVIF already exists, the task is reused immediately without downloading or converting the remote image.
+
+## Size target and recursive compression
+
+Each remote image is downloaded once. AVIF attempts always start from the original downloaded bytes; the plugin never re-encodes a previously generated AVIF.
+
+The first attempt uses `quality`. If the result exceeds `max_size_kb`, the plugin recursively searches lower AVIF quality values for the highest quality result that fits the target. The search is bounded by `max_compress_attempts`, including the first encoding attempt.
+
+Defaults:
+
+- target size: `100 KB` (`100 * 1024` bytes)
+- maximum attempts: `6`
+- initial/maximum searched quality: `75`
+
+If no attempt can reach the target size, the smallest result found is still written and the plugin logs a `SIZE_TARGET_MISS` warning. The conversion is still considered successful and the Markdown URL is rewritten. The plugin does not resize image dimensions to force the target size.
+
 ## Error behavior
 
-Image processing is serial.
+A normal image failure such as HTTP 403/404, timeout, download failure, or decoding failure is logged. That target keeps its original remote references and processing continues with other image tasks.
 
-A normal image failure such as HTTP 403/404, timeout, download failure, or decoding failure is logged. That image keeps its original remote URL and processing continues with subsequent images.
-
-If multiple remote references resolve to the same full destination path, the first one that successfully creates the AVIF file wins. Later references check the destination before downloading; when the file already exists, it is reused directly and the Markdown URL is rewritten to the same local path.
+If multiple remote references resolve to the same full destination path, they share one conversion task and are rewritten to the same local path after that task succeeds.
 
 This also applies when the same image appears in multiple Markdown files or when URL query strings/fragments differ but resolve to the same local filename.
 
@@ -118,8 +140,15 @@ image_avif:
   quality: 75
   effort: 4
   timeout: 30000
+
   handle_subffix:
     - '*'
+
+  concurrent: true
+  concurrency: 0
+
+  max_size_kb: 100
+  max_compress_attempts: 6
 ```
 
 `handle_subffix` behavior:
@@ -128,6 +157,20 @@ image_avif:
 - `[]`: process all remote image URLs
 - contains `*`: process all remote image URLs
 - `['.png', '.jpg']`: only process URLs whose pathname ends in `.png` or `.jpg`
+
+Concurrency behavior:
+
+- `concurrent` omitted or `true`: enable concurrent conversion
+- `concurrent: false`: process conversion tasks serially
+- `concurrency` omitted or `0`: use `os.availableParallelism()`
+- `concurrency: 4`: run at most 4 image conversion tasks simultaneously
+
+Compression behavior:
+
+- `max_size_kb` omitted: target `100 KB`
+- `max_compress_attempts` omitted: try at most `6` AVIF encodings
+- `quality` is the first attempt and the upper bound of the recursive quality search
+- reaching the size target is best-effort; dimensions are never reduced automatically
 
 ## Development
 

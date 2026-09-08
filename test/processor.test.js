@@ -48,14 +48,8 @@ test('reuses the same target path across Markdown files instead of treating it a
   const summary = await processImages(hexo, { convertRemoteImage: converter });
 
   assert.equal(conversions, 1);
-  assert.equal(
-    await fs.readFile(firstPath, 'utf8'),
-    '![a](/images/ai/images-a.avif)\n',
-  );
-  assert.equal(
-    await fs.readFile(secondPath, 'utf8'),
-    '![b](/images/ai/images-a.avif)\n',
-  );
+  assert.equal(await fs.readFile(firstPath, 'utf8'), '![a](/images/ai/images-a.avif)\n');
+  assert.equal(await fs.readFile(secondPath, 'utf8'), '![b](/images/ai/images-a.avif)\n');
   assert.equal(summary.converted, 1);
   assert.equal(summary.reused, 1);
   assert.equal(summary.failed, 0);
@@ -66,14 +60,11 @@ test('reuses an existing target without downloading and replaces the source URL'
   const markdownPath = path.join(sourceDir, '_posts', 'ai', '2026', 'post.md');
   await fs.mkdir(path.dirname(markdownPath), { recursive: true });
   await fs.writeFile(markdownPath, '![a](https://cdn.example.com/images/2025/a.jpg)\n');
-
   const targetPath = path.join(sourceDir, 'images', 'ai', '2026', 'images-2025-a.avif');
   await fs.mkdir(path.dirname(targetPath), { recursive: true });
   await fs.writeFile(targetPath, 'already-avif');
-
   let conversions = 0;
   const summary = await processImages(hexo, { convertRemoteImage: async () => { conversions++; } });
-
   assert.equal(conversions, 0);
   assert.equal(await fs.readFile(markdownPath, 'utf8'), '![a](/images/ai/2026/images-2025-a.avif)\n');
   assert.equal(summary.reused, 1);
@@ -81,8 +72,9 @@ test('reuses an existing target without downloading and replaces the source URL'
   assert.equal(summary.failed, 0);
 });
 
-test('processes jobs serially and leaves only failed image references unchanged', async () => {
+test('concurrent=false processes jobs serially and leaves only failed image references unchanged', async () => {
   const { sourceDir, hexo, messages } = await makeSite();
+  hexo.config.image_avif = { concurrent: false, concurrency: 8 };
   const markdownPath = path.join(sourceDir, '_posts', 'post.md');
   await fs.writeFile(markdownPath, [
     '![one](http://img.example.com/a.jpg)',
@@ -103,9 +95,7 @@ test('processes jobs serially and leaves only failed image references unchanged'
       if (url.endsWith('/b.png')) throw new Error('decode failed');
       await fs.mkdir(path.dirname(targetPath), { recursive: true });
       await fs.writeFile(targetPath, 'avif');
-    } finally {
-      active--;
-    }
+    } finally { active--; }
   }
 
   const summary = await processImages(hexo, { convertRemoteImage: converter });
@@ -140,16 +130,13 @@ test('handle_subffix filters by URL pathname extension before processing', async
     '',
   ].join('\n');
   await fs.writeFile(markdownPath, original);
-
   const convertedUrls = [];
   async function converter({ url, targetPath }) {
     convertedUrls.push(url);
     await fs.mkdir(path.dirname(targetPath), { recursive: true });
     await fs.writeFile(targetPath, 'avif');
   }
-
   const summary = await processImages(hexo, { convertRemoteImage: converter });
-
   assert.deepEqual(convertedUrls, ['https://img.example.com/images/a.jpg?width=1200']);
   assert.equal(await fs.readFile(markdownPath, 'utf8'), [
     '![jpg](/images/images-a.avif)',
@@ -172,14 +159,12 @@ test('empty or wildcard handle_subffix processes every remote image', async () =
       '![noext](https://img.example.com/image)',
       '',
     ].join('\n'));
-
     const convertedUrls = [];
     async function converter({ url, targetPath }) {
       convertedUrls.push(url);
       await fs.mkdir(path.dirname(targetPath), { recursive: true });
       await fs.writeFile(targetPath, 'avif');
     }
-
     const summary = await processImages(hexo, { convertRemoteImage: converter });
     assert.deepEqual(convertedUrls, [
       'https://img.example.com/a.jpg',
@@ -188,4 +173,129 @@ test('empty or wildcard handle_subffix processes every remote image', async () =
     ]);
     assert.equal(summary.found, 3);
   }
+});
+
+
+test('processes unique target paths concurrently up to configured concurrency', async () => {
+  const { sourceDir, hexo } = await makeSite();
+  hexo.config.image_avif = { concurrent: true, concurrency: 2 };
+  const markdownPath = path.join(sourceDir, '_posts', 'parallel.md');
+  const original = [
+    '![a](https://img.example.com/a.jpg)',
+    '![b](https://img.example.com/b.jpg)',
+    '![c](https://img.example.com/c.jpg)',
+    '![d](https://img.example.com/d.jpg)',
+    '',
+  ].join('\n');
+  await fs.writeFile(markdownPath, original);
+
+  let active = 0;
+  let maxActive = 0;
+  async function converter({ targetPath }) {
+    active++;
+    maxActive = Math.max(maxActive, active);
+    assert.equal(await fs.readFile(markdownPath, 'utf8'), original);
+    await new Promise(resolve => setTimeout(resolve, 15));
+    await fs.mkdir(path.dirname(targetPath), { recursive: true });
+    await fs.writeFile(targetPath, 'avif');
+    active--;
+    return { targetMet: true, sizeBytes: 1000, quality: 75, attempts: 1 };
+  }
+
+  const summary = await processImages(hexo, { convertRemoteImage: converter });
+
+  assert.equal(maxActive, 2);
+  assert.equal(summary.converted, 4);
+  assert.equal(summary.failed, 0);
+  assert.equal(await fs.readFile(markdownPath, 'utf8'), [
+    '![a](/images/a.avif)',
+    '![b](/images/b.avif)',
+    '![c](/images/c.avif)',
+    '![d](/images/d.avif)',
+    '',
+  ].join('\n'));
+});
+
+test('uses available parallelism as default concurrency when concurrent is omitted', async () => {
+  const { sourceDir, hexo } = await makeSite();
+  hexo.config.image_avif = {};
+  const markdownPath = path.join(sourceDir, '_posts', 'auto-parallel.md');
+  await fs.writeFile(markdownPath, [
+    '![a](https://img.example.com/a.jpg)',
+    '![b](https://img.example.com/b.jpg)',
+    '![c](https://img.example.com/c.jpg)',
+    '![d](https://img.example.com/d.jpg)',
+    '',
+  ].join('\n'));
+
+  let active = 0;
+  let maxActive = 0;
+  async function converter({ targetPath }) {
+    active++;
+    maxActive = Math.max(maxActive, active);
+    await new Promise(resolve => setTimeout(resolve, 15));
+    await fs.mkdir(path.dirname(targetPath), { recursive: true });
+    await fs.writeFile(targetPath, 'avif');
+    active--;
+  }
+
+  await processImages(hexo, {
+    convertRemoteImage: converter,
+    availableParallelism: () => 3,
+  });
+
+  assert.equal(maxActive, 3);
+});
+
+test('deduplicates concurrent work by target path and maps every reference to the result', async () => {
+  const { sourceDir, hexo } = await makeSite();
+  hexo.config.image_avif = { concurrent: true, concurrency: 4 };
+  const firstPath = path.join(sourceDir, '_posts', 'same', 'a.md');
+  const secondPath = path.join(sourceDir, '_posts', 'same', 'b.md');
+  await fs.mkdir(path.dirname(firstPath), { recursive: true });
+  await fs.writeFile(firstPath, '![a](https://img.example.com/shared/photo.jpg?v=1)\n');
+  await fs.writeFile(secondPath, '![b](https://img.example.com/shared/photo.jpg?v=2)\n');
+
+  let conversions = 0;
+  async function converter({ targetPath }) {
+    conversions++;
+    await new Promise(resolve => setTimeout(resolve, 10));
+    await fs.mkdir(path.dirname(targetPath), { recursive: true });
+    await fs.writeFile(targetPath, 'avif');
+  }
+
+  const summary = await processImages(hexo, { convertRemoteImage: converter });
+
+  assert.equal(conversions, 1);
+  assert.equal(summary.converted, 1);
+  assert.equal(summary.reused, 1);
+  assert.equal(await fs.readFile(firstPath, 'utf8'), '![a](/images/same/shared-photo.avif)\n');
+  assert.equal(await fs.readFile(secondPath, 'utf8'), '![b](/images/same/shared-photo.avif)\n');
+});
+
+test('passes size compression settings to image conversion and reports oversized results', async () => {
+  const { sourceDir, hexo } = await makeSite();
+  hexo.config.image_avif = {
+    concurrent: false,
+    max_size_kb: 88,
+    max_compress_attempts: 4,
+  };
+  const markdownPath = path.join(sourceDir, '_posts', 'size.md');
+  await fs.writeFile(markdownPath, '![a](https://img.example.com/a.jpg)\n');
+
+  let received;
+  async function converter(options) {
+    received = options;
+    await fs.mkdir(path.dirname(options.targetPath), { recursive: true });
+    await fs.writeFile(options.targetPath, 'avif');
+    return { targetMet: false, sizeBytes: 100000, quality: 12, attempts: 4 };
+  }
+
+  const summary = await processImages(hexo, { convertRemoteImage: converter });
+
+  assert.equal(received.maxSizeKb, 88);
+  assert.equal(received.maxCompressAttempts, 4);
+  assert.equal(summary.oversized, 1);
+  assert.equal(summary.failed, 0);
+  assert.equal(await fs.readFile(markdownPath, 'utf8'), '![a](/images/a.avif)\n');
 });

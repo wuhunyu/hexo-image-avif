@@ -5,20 +5,26 @@ const assert = require('node:assert/strict');
 
 const { register } = require('../index');
 
-function fakeHexo(command) {
+function fakeHexo(command, imageAvifConfig = {}) {
   const filters = new Map();
+  const filterPriorities = new Map();
   const consoles = new Map();
   return {
     env: { cmd: command },
+    config: { image_avif: imageAvifConfig },
     extend: {
       filter: {
-        register(name, fn) { filters.set(name, fn); },
+        register(name, fn, priority) {
+          filters.set(name, fn);
+          filterPriorities.set(name, priority);
+        },
       },
       console: {
         register(name, description, fn) { consoles.set(name, { description, fn }); },
       },
     },
     filters,
+    filterPriorities,
     consoles,
   };
 }
@@ -33,6 +39,16 @@ test('runs image processing from after_init for g and generate commands', async 
     await hexo.filters.get('after_init')();
     assert.equal(calls, 1);
   }
+});
+
+test('registers after_init early by default and supports custom priority', () => {
+  const defaultHexo = fakeHexo('generate');
+  register(defaultHexo, { processImages: async () => {} });
+  assert.equal(defaultHexo.filterPriorities.get('after_init'), 0);
+
+  const customHexo = fakeHexo('generate', { priority: -50 });
+  register(customHexo, { processImages: async () => {} });
+  assert.equal(customHexo.filterPriorities.get('after_init'), -50);
 });
 
 test('does not auto-run image processing for unrelated commands', async () => {

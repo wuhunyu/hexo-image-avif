@@ -45,8 +45,9 @@ It processes remote image URLs in:
 - frontmatter `thumbnail`
 - frontmatter `cover`
 - Markdown image syntax: `![](...)`
+- HTML image tags: `<img src="...">`, including images inside `{% waterfall %}` blocks
 
-Only `http://` and `https://` URLs are processed. Empty and already-local references are ignored.
+Only `http://` and `https://` URLs are processed. Empty and already-local references are ignored. HTML `<img>` tags inside fenced code blocks or inline code are ignored.
 
 By default, every remote image URL is attempted. You can limit processing by URL pathname suffix with `image_avif.handle_subffix`.
 
@@ -62,6 +63,12 @@ image_avif:
 Suffix matching is case-insensitive and ignores URL query strings and fragments. An omitted or empty `handle_subffix`, or a list containing `*`, processes all remote image URLs, including URLs without a file extension.
 
 SVG input is supported through Sharp and is rasterized at 144 DPI before AVIF encoding.
+
+## Plugin ordering
+
+Automatic processing is registered on Hexo's `after_init` filter with priority `0` by default. Hexo executes lower filter priorities first, so this runs before plugins that use the default filter priority `10`. You can override it with `image_avif.priority`.
+
+Image localization therefore finishes before post rendering begins. Plugins such as `hexo-plugin-waterfall` parse their `{% waterfall %}` content later during tag rendering, so they receive the already-rewritten local AVIF `src` values instead of the original remote URLs.
 
 ## Output path
 
@@ -137,6 +144,7 @@ Optional `_config.yml` settings:
 ```yaml
 image_avif:
   enable: true
+  priority: 0
   quality: 75
   effort: 4
   timeout: 30000
@@ -150,6 +158,12 @@ image_avif:
   max_size_kb: 100
   max_compress_attempts: 6
 ```
+
+Ordering behavior:
+
+- `priority` omitted: use `0`
+- lower `priority` values run earlier than higher values for the same Hexo filter
+- the plugin still runs on `after_init`, before post/tag rendering
 
 `handle_subffix` behavior:
 

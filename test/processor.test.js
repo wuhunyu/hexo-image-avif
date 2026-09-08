@@ -7,7 +7,6 @@ const path = require('node:path');
 const os = require('node:os');
 
 const { processImages } = require('../lib/processor');
-const { DestinationCollisionError } = require('../lib/collisions');
 
 async function makeSite() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'hexo-image-avif-site-'));
@@ -31,26 +30,35 @@ async function makeSite() {
   };
 }
 
-test('detects collisions before any conversion or Markdown mutation', async () => {
+test('reuses the same target path across Markdown files instead of treating it as a collision', async () => {
   const { sourceDir, hexo } = await makeSite();
-  const postPath = path.join(sourceDir, '_posts', 'ai', 'a.md');
-  const draftPath = path.join(sourceDir, '_drafts', 'ai', 'b.md');
-  await fs.mkdir(path.dirname(postPath), { recursive: true });
-  await fs.mkdir(path.dirname(draftPath), { recursive: true });
-  const postContent = '![a](https://one.example.com/images/a.jpg)\n';
-  const draftContent = '![b](https://two.example.com/images/a.png)\n';
-  await fs.writeFile(postPath, postContent);
-  await fs.writeFile(draftPath, draftContent);
+  const firstPath = path.join(sourceDir, '_posts', 'ai', 'a.md');
+  const secondPath = path.join(sourceDir, '_posts', 'ai', 'b.md');
+  await fs.mkdir(path.dirname(firstPath), { recursive: true });
+  await fs.writeFile(firstPath, '![a](https://img.example.com/images/a.jpg?version=1)\n');
+  await fs.writeFile(secondPath, '![b](https://img.example.com/images/a.jpg?version=2)\n');
 
   let conversions = 0;
-  await assert.rejects(
-    processImages(hexo, { convertRemoteImage: async () => { conversions++; } }),
-    error => error instanceof DestinationCollisionError,
-  );
+  async function converter({ targetPath }) {
+    conversions++;
+    await fs.mkdir(path.dirname(targetPath), { recursive: true });
+    await fs.writeFile(targetPath, 'avif');
+  }
 
-  assert.equal(conversions, 0);
-  assert.equal(await fs.readFile(postPath, 'utf8'), postContent);
-  assert.equal(await fs.readFile(draftPath, 'utf8'), draftContent);
+  const summary = await processImages(hexo, { convertRemoteImage: converter });
+
+  assert.equal(conversions, 1);
+  assert.equal(
+    await fs.readFile(firstPath, 'utf8'),
+    '![a](/images/ai/images-a.avif)\n',
+  );
+  assert.equal(
+    await fs.readFile(secondPath, 'utf8'),
+    '![b](/images/ai/images-a.avif)\n',
+  );
+  assert.equal(summary.converted, 1);
+  assert.equal(summary.reused, 1);
+  assert.equal(summary.failed, 0);
 });
 
 test('reuses an existing target without downloading and replaces the source URL', async () => {
@@ -67,10 +75,7 @@ test('reuses an existing target without downloading and replaces the source URL'
   const summary = await processImages(hexo, { convertRemoteImage: async () => { conversions++; } });
 
   assert.equal(conversions, 0);
-  assert.equal(
-    await fs.readFile(markdownPath, 'utf8'),
-    '![a](/images/ai/2026/images-2025-a.avif)\n',
-  );
+  assert.equal(await fs.readFile(markdownPath, 'utf8'), '![a](/images/ai/2026/images-2025-a.avif)\n');
   assert.equal(summary.reused, 1);
   assert.equal(summary.converted, 0);
   assert.equal(summary.failed, 0);
@@ -124,7 +129,7 @@ test('processes jobs serially and leaves only failed image references unchanged'
   assert.equal(messages.warn.some(message => message.includes('decode failed')), true);
 });
 
-test('handle_subffix filters by URL pathname extension before collision detection', async () => {
+test('handle_subffix filters by URL pathname extension before processing', async () => {
   const { sourceDir, hexo } = await makeSite();
   hexo.config.image_avif = { handle_subffix: ['.JPG'] };
   const markdownPath = path.join(sourceDir, '_posts', 'post.md');

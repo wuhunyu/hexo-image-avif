@@ -104,15 +104,9 @@ Image processing is serial.
 
 A normal image failure such as HTTP 403/404, timeout, download failure, or decoding failure is logged. That image keeps its original remote URL and processing continues with subsequent images.
 
-If two different remote URLs resolve to the same destination path, processing stops before any download or Markdown mutation. Suffix filtering is applied before collision detection, so excluded images do not participate in collision checks.
+If multiple remote references resolve to the same full destination path, the first one that successfully creates the AVIF file wins. Later references check the destination before downloading; when the file already exists, it is reused directly and the Markdown URL is rewritten to the same local path.
 
-The error prints:
-
-- destination path
-- first Markdown file and remote URL
-- conflicting Markdown file and remote URL
-
-This collision requires manual intervention.
+This also applies when the same image appears in multiple Markdown files or when URL query strings/fragments differ but resolve to the same local filename.
 
 ## Configuration
 
